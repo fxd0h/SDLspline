@@ -6,15 +6,17 @@
  *
  */
 
-#include<stdio.h>
-#include<stdlib.h>
-#include<math.h>
-#include<SDL2/SDL.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <math.h>
+#include <SDL2/SDL.h>
+#include <SDL2/SDL_ttf.h>
+
 #define HERMITESPLINE 1
 #define LERPSPLINE 0
 #define CATMULLSPLINE 2
 #define SMOOTHSPLINE 3
-#define SPLINETYPE SMOOTHSPLINE
+uint8_t  SPLINETYPE = LERPSPLINE;
 
 SDL_Window* window = NULL;
 SDL_Renderer* renderer = NULL;
@@ -24,6 +26,7 @@ uint8_t posCounter;
 uint32_t frames=0;
 int32_t X_OFFSET =100;
 int32_t Y_OFFSET =300;
+double SplineTension =0;
 
 static double double_map(double valueCoord1,
                          double startCoord1, double endCoord1,
@@ -179,7 +182,7 @@ double SmoothStep(double value1, double value2, double amount)
  * totalFrames: total frames of the movement
  * controlPoints: array of control points
  * controlPointsNb: number of controlPoints
- * splineType:  0: linear 
+ * splineType:  0: linear
  *              1: hermite
  *              2: catmull
  *              3: smoothstep
@@ -249,7 +252,7 @@ void drawPoints(int32_t * framesArr, uint16_t totalFrames){
     for ( int i =0 ; i <totalFrames;i++){
         x_mapped = double_map(i,0,frames,0,800) ;//X_OFFSET
         y_mapped = double_map(framesArr[i],-300000,300000,300,-300);
-        printf("Frame: %.3d - Position: %.6d\r\n",i,framesArr[i]);
+       // printf("Frame: %.3d - Position: %.6d\r\n",i,framesArr[i]);
 
         SDL_SetRenderDrawColor(renderer, 0, 255, 0, SDL_ALPHA_OPAQUE);
         SDL_RenderDrawPoint(renderer , (int)x_mapped+X_OFFSET, (int)y_mapped+Y_OFFSET) ;
@@ -260,8 +263,8 @@ void drawPoints(int32_t * framesArr, uint16_t totalFrames){
 
 void drawVelocity(int32_t * framesArr, uint16_t totalFrames){
     double x_mapped,y_mapped,velo;
-    for ( int i =0 ; i <totalFrames;i++){
-        if ( i < totalFrames -1){
+    for ( int i =0 ; i <=totalFrames;i++){
+        if ( i <= totalFrames -1){
             velo = (double) (framesArr[i+1] - framesArr[i] );
         }else{
             velo = 0;
@@ -291,10 +294,76 @@ void drawControlPoints(int32_t* controlPoints,uint16_t controlPointsNb,int16_t t
 
     }
 }
+
+void drawBanner(void){
+
+    TTF_Init();
+    TTF_Font* Sans = TTF_OpenFont("../FreeSans.ttf", 18);
+    if(!Sans) {
+        printf("TTF_OpenFont: %s\n", TTF_GetError());
+        exit(0);
+    }
+    SDL_Color White = {255, 255, 255};
+    SDL_Surface* surfaceMessage = TTF_RenderText_Blended_Wrapped(Sans," l: Linear \r\n h: Hermite\r\n c: Catmull\r\n s: SmoothStep\r\n r: Randomize\r\n t: -0.1 tension\r\n y: +0.1 tension\r\n q: quit", White,150);
+    SDL_Texture* Message = SDL_CreateTextureFromSurface(renderer, surfaceMessage);
+    SDL_Rect Message_rect;
+
+    Message_rect.x = 0;
+    Message_rect.y = 500;
+    Message_rect.w = surfaceMessage->w;
+    Message_rect.h = surfaceMessage->h;
+
+    SDL_RenderCopy(renderer, Message, NULL, &Message_rect);
+    SDL_DestroyTexture( Message );
+    SDL_FreeSurface( surfaceMessage );
+    TTF_CloseFont(Sans);
+}
+
+
+void drawStatus(void){
+    char buffer[255];
+
+    switch (SPLINETYPE){
+        case 0: //lerp
+            snprintf(buffer,255,"LERP");
+            break;
+        case 1: //hermite
+            snprintf(buffer,255,"HERMITE T: %.1f",SplineTension);
+            break;
+        case 2: //catmull
+            snprintf(buffer,255,"CATMULL-ROM");
+            break;
+        case 3: //smooth
+            snprintf(buffer,255,"SMOOTHSTEP");
+            break;
+    }
+    TTF_Init();
+    TTF_Font* Sans = TTF_OpenFont("../FreeSans.ttf", 18);
+    if(!Sans) {
+        printf("TTF_OpenFont: %s\n", TTF_GetError());
+        exit(0);
+    }
+    SDL_Color White = {255, 255, 255};
+
+    SDL_Surface* surfaceMessage = TTF_RenderText_Blended_Wrapped(Sans,buffer, White,300);
+    SDL_Texture* Message = SDL_CreateTextureFromSurface(renderer, surfaceMessage);
+    SDL_Rect Message_rect;
+
+    Message_rect.x = 0;
+    Message_rect.y = 0;
+    Message_rect.w = surfaceMessage->w;
+    Message_rect.h = surfaceMessage->h;
+
+    SDL_RenderCopy(renderer, Message, NULL, &Message_rect);
+    SDL_DestroyTexture( Message );
+    SDL_FreeSurface( surfaceMessage );
+    TTF_CloseFont(Sans);
+}
+
 int main(int argc, char* argv[])
 {
     int32_t framesArray[4096];
-    uint8_t contFlag = 0;
+    uint8_t contFlag = 1;
     int i;
 
     frames = 240;
@@ -314,6 +383,7 @@ int main(int argc, char* argv[])
 
             int i = 0 ;
             int x[4] , y[4] , flagDrawn = 0 ;
+
             while (!done)
             {
                 SDL_Event event;
@@ -333,17 +403,46 @@ int main(int argc, char* argv[])
                     {
                         contFlag=1;
                     }
+
+                    if (event.type == SDL_KEYDOWN){
+                        switch (event.key.keysym.sym)
+                        {
+                            case SDLK_l:   SPLINETYPE = 0; break;
+                            case SDLK_c:   SPLINETYPE = 2; break;
+                            case SDLK_h:   SPLINETYPE = 1; break;
+                            case SDLK_s:   SPLINETYPE = 3; break;
+                            case SDLK_t:
+                                SplineTension = SplineTension -0.1;
+                                break;
+                            case SDLK_y:
+                                SplineTension = SplineTension +0.1;
+                                break;
+                            case SDLK_q:
+                                SDL_Quit();
+                                exit(0);
+                                break;
+                            case SDLK_r:
+                                posCounter = (rand() % (9 - 2 + 1)) + 2;
+                                for (i = 0; i < posCounter; i++) {
+                                    controlPoints[i] = (rand() % (300000 - -300000 + 1)) + -300000;
+                                }
+                                break;
+                        }
+                        contFlag=1;
+
+                    }
                 }
                 if ( contFlag==1 ) {
-                    posCounter = (rand() % (9 - 2 + 1)) + 2;
-                    for (i = 0; i < posCounter; i++) {
-                        controlPoints[i] = (rand() % (300000 - -300000 + 1)) + -300000;
-                    }
+
                     drawAxis();
-                    printf ( "fillPositionsSpline = %d\r\n",fillPositionsSpline(frames, controlPoints, posCounter, SPLINETYPE , 1 , 0 ,framesArray, 4095));
+                    //printf ( "fillPositionsSpline = %d\r\n",
+                    fillPositionsSpline(frames, controlPoints, posCounter, SPLINETYPE , SplineTension , 0 ,framesArray, 4095);
+                            //);
                     drawPoints(framesArray,frames);
                     drawControlPoints(controlPoints,posCounter, frames) ;
                     drawVelocity(framesArray,frames);
+                    drawBanner();
+                    drawStatus();
                     /*show the window*/
                     SDL_RenderPresent(renderer);
                     contFlag = 0;
