@@ -10,6 +10,11 @@
 #include<stdlib.h>
 #include<math.h>
 #include<SDL2/SDL.h>
+#define HERMITESPLINE 1
+#define LERPSPLINE 0
+#define CATMULLSPLINE 2
+#define SMOOTHSPLINE 3
+#define SPLINETYPE SMOOTHSPLINE
 
 SDL_Window* window = NULL;
 SDL_Renderer* renderer = NULL;
@@ -82,6 +87,18 @@ void drawAxis() {
     }
 }
 
+
+double Clamp(double value, double min, double max)
+{
+    // First we check to see if we're greater than the max
+    value = (value > max) ? max : value;
+
+    // Then we check to see if we're less than the min.
+    value = (value < min) ? min : value;
+
+    // There's no check to see if min > max.
+    return value;
+}
 /*
    Tension: 1 is high, 0 normal, -1 is low
    Bias: 0 is even,
@@ -112,12 +129,61 @@ double HermiteInterpolate(
     return(a0*y1+a1*m0+a2*m1+a3*y2);
 }
 
+
+
+double CatmullRom(double value1, double value2, double value3, double value4, double amount)
+{
+    // Using formula from http://www.mvps.org/directx/articles/catmull/
+    double amountSquared = amount * amount;
+    double amountCubed = amountSquared * amount;
+    return (double)(0.5 * (2.0 * value2 +
+                           (value3 - value1) * amount +
+                           (2.0 * value1 - 5.0 * value2 + 4.0 * value3 - value4) * amountSquared +
+                           (3.0 * value2 - value1 - 3.0 * value3 + value4) * amountCubed));
+}
+double Hermite(double value1, double tangent1, double value2, double tangent2, double amount)
+{
+    double v1 = value1, v2 = value2, t1 = tangent1, t2 = tangent2, s = amount, result;
+    double sCubed = s * s * s;
+    double sSquared = s * s;
+
+    if (amount == 0)
+        result = value1;
+    else if (amount == 1)
+        result = value2;
+    else
+        result = (2 * v1 - 2 * v2 + t2 + t1) * sCubed +
+                 (3 * v2 - 3 * v1 - 2 * t1 - t2) * sSquared +
+                 t1 * s +
+                 v1;
+    return (double)result;
+}
+
+double Lerp(double value1, double value2, double amount)
+{
+    return value1 + (value2 - value1) * amount;
+}
+
+
+double SmoothStep(double value1, double value2, double amount)
+{
+    // It is expected that 0 < amount < 1
+    // If amount < 0, return value1
+    // If amount > 1, return value2
+
+    double result = Clamp(amount, 0, 1);
+    result = Hermite(value1, 0, value2, 0, result);
+    return result;
+}
 /* fillPositionsSpline
  * totalFrames: total frames of the movement
  * controlPoints: array of control points
  * controlPointsNb: number of controlPoints
- * splineType:  0: linear //TODO
- *              1: catmull_rom
+ * splineType:  0: linear 
+ *              1: hermite
+ *              2: catmull
+ *              3: smoothstep
+ *
  * tension: -1 .. 1  ( 0.5 centripedal )
  * bias : -1 .. 1   (0)
  * framesArr: filled frames positions array
@@ -161,8 +227,14 @@ uint8_t fillPositionsSpline(uint16_t totalFrames, int32_t * controlPoints, uint1
             p1 = myControlPoints[i+1];
             p2 = myControlPoints[i+2];
             p3 = myControlPoints[i+3];
-
-            Y = HermiteInterpolate( p0, p1, p2, p3, t, tension, bias);
+            if (type == 0)
+                Y = Lerp(p1,p2,t);
+            if (type == 1)
+                Y = HermiteInterpolate( p0, p1, p2, p3, t, tension, bias);
+            else if (type ==2 )
+                Y = CatmullRom(p0,p1,p2,p3,t);
+            else if ( type ==3 )
+                Y = SmoothStep(p1,p2,t);
             X = j;
             framesArr[X]=Y;
 
@@ -252,7 +324,7 @@ int main(int argc, char* argv[])
 
                 /*set draw color to white*/
                 SDL_SetRenderDrawColor(renderer, 255, 255, 255, SDL_ALPHA_OPAQUE);
-               if (SDL_WaitEvent(&event)){
+                if (SDL_WaitEvent(&event)){
                     if (event.type == SDL_QUIT)
                     {
                         done = SDL_TRUE;
@@ -268,7 +340,7 @@ int main(int argc, char* argv[])
                         controlPoints[i] = (rand() % (300000 - -300000 + 1)) + -300000;
                     }
                     drawAxis();
-                    printf ( "fillPositionsSpline = %d\r\n",fillPositionsSpline(frames, controlPoints, posCounter, 1 , -0.1 , 0 ,framesArray, 4095));
+                    printf ( "fillPositionsSpline = %d\r\n",fillPositionsSpline(frames, controlPoints, posCounter, SPLINETYPE , 1 , 0 ,framesArray, 4095));
                     drawPoints(framesArray,frames);
                     drawControlPoints(controlPoints,posCounter, frames) ;
                     drawVelocity(framesArray,frames);
