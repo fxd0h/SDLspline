@@ -21,6 +21,7 @@ uint8_t  SPLINETYPE = LERPSPLINE;
 SDL_Window* window = NULL;
 SDL_Renderer* renderer = NULL;
 int mousePosX , mousePosY ;
+int xnew , ynew ;
 int32_t controlPoints[9];
 uint8_t posCounter;
 uint32_t frames=0;
@@ -247,8 +248,10 @@ uint8_t fillPositionsSpline(uint16_t totalFrames, int32_t * controlPoints, uint1
     return 0; // OK
 }
 
-void drawPoints(int32_t * framesArr, uint16_t totalFrames){
+void drawPoints(int32_t * framesArr, uint16_t totalFrames,uint8_t connected){
     double x_mapped,y_mapped;
+    double x_mapped2,y_mapped2;
+
     for ( int i =0 ; i <totalFrames;i++){
         x_mapped = double_map(i,0,frames,0,800) ;//X_OFFSET
         y_mapped = double_map(framesArr[i],-300000,300000,300,-300);
@@ -257,27 +260,125 @@ void drawPoints(int32_t * framesArr, uint16_t totalFrames){
         SDL_SetRenderDrawColor(renderer, 0, 255, 0, SDL_ALPHA_OPAQUE);
         SDL_RenderDrawPoint(renderer , (int)x_mapped+X_OFFSET, (int)y_mapped+Y_OFFSET) ;
     }
-    return;
-}
+
+    if ( connected){
+
+        for (int i = 0; i <= totalFrames - 1; i++) {
 
 
-void drawVelocity(int32_t * framesArr, uint16_t totalFrames){
-    double x_mapped,y_mapped,velo;
-    for ( int i =0 ; i <=totalFrames;i++){
-        if ( i <= totalFrames -1){
-            velo = (double) (framesArr[i+1] - framesArr[i] );
-        }else{
-            velo = 0;
+            x_mapped = double_map(i , 0, frames, 0, 800);//X_OFFSET
+            y_mapped = double_map(framesArr[i], -300000, 300000, 300, -300);
+            x_mapped2 = double_map(i+1, 0, frames, 0, 800);//X_OFFSET
+            y_mapped2 = double_map(framesArr[i + 1], -300000, 300000, 300, -300);
+
+            SDL_SetRenderDrawColor(renderer, 0, 255, 0, SDL_ALPHA_OPAQUE);
+            SDL_RenderDrawLine(renderer, (int) x_mapped + X_OFFSET, (int) y_mapped + Y_OFFSET,
+                               (int) x_mapped2 + X_OFFSET, (int) y_mapped2 + Y_OFFSET);
+
+
         }
-        x_mapped = double_map(i,0,frames,0,800) ;//X_OFFSET
-        y_mapped = double_map(velo,-50000,50000,300,-300);
-
-        SDL_SetRenderDrawColor(renderer, 0, 255, 255, SDL_ALPHA_OPAQUE);
-        SDL_RenderDrawPoint(renderer , (int)x_mapped+X_OFFSET, (int)y_mapped+Y_OFFSET) ;
     }
     return;
 }
 
+void fillVelocity(int32_t * framesArr,double *velArray,uint16_t totalFrames){
+
+    for ( int i =1 ; i <=totalFrames;i++){
+
+        if ( i <= totalFrames -1){
+            velArray[i] = (double) (framesArr[i+1] - framesArr[i] );
+        }else{
+            velArray[i] = 0;
+        }
+    }
+    return;
+}
+
+void fillAccel(double *velArray,double *accelArray,uint16_t totalFrames){
+
+    for ( int i =1 ; i <=totalFrames;i++){
+
+        if ( i <= totalFrames -1){
+            accelArray[i] = (double) (velArray[i+1] - velArray[i] );
+        }else {
+            accelArray[i] = 0;
+        }
+    }
+    return;
+}
+
+void drawVelocity(double * veloArray, uint16_t totalFrames,uint8_t connected){
+    double x_mapped,y_mapped;
+    double x_mapped2,y_mapped2;
+
+    for ( int i =0 ; i <=totalFrames;i++){
+
+
+        x_mapped = double_map(i-1,0,frames,0,800) ;//X_OFFSET
+        y_mapped = double_map(veloArray[i],-50000,50000,300,-300);
+
+        SDL_SetRenderDrawColor(renderer, 0, 255, 255, SDL_ALPHA_OPAQUE);
+        SDL_RenderDrawPoint(renderer , (int)x_mapped+X_OFFSET, (int)y_mapped+Y_OFFSET) ;
+
+
+
+    }
+    if (connected){
+        for (int i = 1; i <= totalFrames - 1; i++) {
+
+
+            x_mapped = double_map(i - 1, 0, frames, 0, 800);//X_OFFSET
+            y_mapped = double_map(veloArray[i], -50000, 50000, 300, -300);
+            x_mapped2 = double_map(i, 0, frames, 0, 800);//X_OFFSET
+            y_mapped2 = double_map(veloArray[i + 1], -50000, 50000, 300, -300);
+
+            SDL_SetRenderDrawColor(renderer, 0, 255, 255, SDL_ALPHA_OPAQUE);
+            SDL_RenderDrawLine(renderer, (int) x_mapped + X_OFFSET, (int) y_mapped + Y_OFFSET,
+                               (int) x_mapped2 + X_OFFSET, (int) y_mapped2 + Y_OFFSET);
+
+
+        }
+    }
+    return;
+}
+
+
+void drawAccel(double *accelArray,uint16_t totalFrames,uint8_t connected){
+    double x_mapped,y_mapped,velo,accel;
+    double x_mapped2,y_mapped2;
+    for ( int i =1 ; i <=totalFrames;i++){
+
+
+        x_mapped = double_map(i-1,0,frames,0,800) ;//X_OFFSET
+        y_mapped = double_map(accelArray[i],-5000,5000,300,-300);
+
+        SDL_SetRenderDrawColor(renderer, 255, 255, 0, SDL_ALPHA_OPAQUE);
+        SDL_RenderDrawPoint(renderer , (int)x_mapped+X_OFFSET, (int)y_mapped+Y_OFFSET) ;
+
+
+
+    }
+    if(connected) {
+
+
+        for (int i = 1; i <= totalFrames - 1; i++) {
+
+
+            x_mapped = double_map(i - 1, 0, frames, 0, 800);//X_OFFSET
+            y_mapped = double_map(accelArray[i], -5000, 5000, 300, -300);
+            x_mapped2 = double_map(i, 0, frames, 0, 800);//X_OFFSET
+            y_mapped2 = double_map(accelArray[i + 1], -5000, 5000, 300, -300);
+
+            SDL_SetRenderDrawColor(renderer, 255, 255, 0, SDL_ALPHA_OPAQUE);
+            SDL_RenderDrawLine(renderer, (int) x_mapped + X_OFFSET, (int) y_mapped + Y_OFFSET,
+                               (int) x_mapped2 + X_OFFSET, (int) y_mapped2 + Y_OFFSET);
+
+
+        }
+    }
+
+    return;
+}
 
 void drawControlPoints(int32_t* controlPoints,uint16_t controlPointsNb,int16_t totalFrames) {
     double p,x_mapped,y_mapped;
@@ -360,9 +461,43 @@ void drawStatus(void){
     TTF_CloseFont(Sans);
 }
 
+
+void drawPointStatus(uint16_t x,int16_t frames,int32_t * framesArr,double* velArray, double* accelArray){
+    char buffer[255];
+    uint16_t mappedx;
+    mappedx = (uint16_t)double_map(x,0,800,0,frames) ;//X_OFFSET
+
+    snprintf(buffer,255," Frame: %d \r\n Pos: %d \r\n Vel: %.2f\r\n Acc: %.2f\r\n",x,framesArr[mappedx],velArray[mappedx],accelArray[mappedx]);
+
+    TTF_Init();
+    TTF_Font* Sans = TTF_OpenFont("../FreeSans.ttf", 18);
+    if(!Sans) {
+        printf("TTF_OpenFont: %s\n", TTF_GetError());
+        exit(0);
+    }
+    SDL_Color White = {255, 255, 255};
+
+    SDL_Surface* surfaceMessage = TTF_RenderText_Blended_Wrapped(Sans,buffer, White,300);
+    SDL_Texture* Message = SDL_CreateTextureFromSurface(renderer, surfaceMessage);
+    SDL_Rect Message_rect;
+
+    Message_rect.x = 900;
+    Message_rect.y = 0;
+    Message_rect.w = surfaceMessage->w;
+    Message_rect.h = surfaceMessage->h;
+
+    SDL_RenderCopy(renderer, Message, NULL, &Message_rect);
+    SDL_DestroyTexture( Message );
+    SDL_FreeSurface( surfaceMessage );
+    TTF_CloseFont(Sans);
+}
 int main(int argc, char* argv[])
 {
     int32_t framesArray[4096];
+    double velArray[4096];
+    double accelArray[4096];
+    uint8_t connected=0;
+
     uint8_t contFlag = 1;
     int i;
 
@@ -425,9 +560,35 @@ int main(int argc, char* argv[])
                                 posCounter = (rand() % (9 - 2 + 1)) + 2;
                                 for (i = 0; i < posCounter; i++) {
                                     controlPoints[i] = (rand() % (300000 - -300000 + 1)) + -300000;
+                                    //controlPoints[i] = (rand() % (300000 + 1));
+
                                 }
                                 break;
+                            case SDLK_v:
+                                connected = !connected;
+                                break;
                         }
+                        contFlag=1;
+
+                    }
+                    if(event.type == SDL_MOUSEMOTION)
+                    {
+                        /*get x and y positions from motion of mouse*/
+                        xnew = event.motion.x ;
+                        ynew = event.motion.y ;
+
+                        int j ;
+                        if (((xnew -X_OFFSET)>= (0) )&&((xnew -X_OFFSET)<= (800) )) {
+                            drawPointStatus(xnew-X_OFFSET,frames,framesArray,velArray,accelArray);
+
+                        }
+
+                        /*updating mouse positions to positions
+                        coming from motion*/
+                        mousePosX = xnew ;
+                        mousePosY = ynew ;
+                        SDL_SetRenderDrawColor(renderer, 64, 64, 64, SDL_ALPHA_OPAQUE);
+                        SDL_RenderDrawLine(renderer, xnew, 50, xnew, 650);
                         contFlag=1;
 
                     }
@@ -438,11 +599,17 @@ int main(int argc, char* argv[])
                     //printf ( "fillPositionsSpline = %d\r\n",
                     fillPositionsSpline(frames, controlPoints, posCounter, SPLINETYPE , SplineTension , 0 ,framesArray, 4095);
                             //);
-                    drawPoints(framesArray,frames);
+                    drawPoints(framesArray,frames,connected);
                     drawControlPoints(controlPoints,posCounter, frames) ;
-                    drawVelocity(framesArray,frames);
+                    fillVelocity(framesArray,velArray,frames);
+                    fillAccel(velArray,accelArray,frames);
+                    drawVelocity(velArray,frames,connected);
+
+                    drawAccel(accelArray,frames,connected);
+
                     drawBanner();
                     drawStatus();
+
                     /*show the window*/
                     SDL_RenderPresent(renderer);
                     contFlag = 0;
