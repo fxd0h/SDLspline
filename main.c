@@ -12,11 +12,15 @@
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_ttf.h>
 
+#include <sys/time.h>
+
 #define HERMITESPLINE 1
 #define LERPSPLINE 0
 #define CATMULLSPLINE 2
 #define SMOOTHSPLINE 3
-uint8_t  SPLINETYPE = LERPSPLINE;
+#define TCBSPLINE 4
+
+uint8_t  SPLINETYPE = HERMITESPLINE;
 
 SDL_Window* window = NULL;
 SDL_Renderer* renderer = NULL;
@@ -24,11 +28,17 @@ int mousePosX , mousePosY ;
 int xnew , ynew ;
 int32_t controlPoints[9];
 uint8_t posCounter;
-uint32_t frames=0;
-int32_t X_OFFSET =100;
-int32_t Y_OFFSET =300;
-double SplineTension =0;
+uint32_t frames = 0;
+int32_t X_OFFSET = 100;
+int32_t Y_OFFSET = 300;
+double SplineTension = 0;
+double SplineBias = 0;
+double SplineContinuity = 0;
+int SplineTimeElapsed;
 
+
+
+uint8_t fixLastVal =0;
 static double double_map(double valueCoord1,
                          double startCoord1, double endCoord1,
                          double startCoord2, double endCoord2) {
@@ -36,6 +46,93 @@ static double double_map(double valueCoord1,
     double ratio = (endCoord2 - startCoord2) / (endCoord1 - startCoord1);
     return ratio * (valueCoord1 - startCoord1) + offset;
 }
+
+
+
+
+static inline float  TCBTangentEquationIncoming(float pm1, float p0, float p1, float t, float c, float b)
+{
+return ((1-t)*(1-c)*(1+b))/2*(p0-pm1) + ((1-t)*(1+c)*(1-b))/2*(p1-p0);
+}
+
+static inline float TCBTangentEquationOutgoing(float pm1, float p0, float p1, float t, float c, float b)
+{
+return ((1-t)*(1+c)*(1+b))/2*(p0-pm1) + ((1-t)*(1-c)*(1-b))/2*(p1-p0);
+}
+
+static inline float InterpolateTCB(float pm1, float p0, float p1, float p2, float s, float to0, float ti1)
+{
+    float S[4];
+    float ret;
+    float V[4];
+    //float C[4];
+    //float Matrix[4][4];
+  /*
+    Matrix[0][0] = 2; Matrix[1][0] = -2; Matrix[2][0] = 1; Matrix[3][0] = 1;
+    Matrix[0][1] = -3; Matrix[1][1] = 3; Matrix[2][1] = -2; Matrix[3][1] = -1;
+    Matrix[0][2] = 0; Matrix[1][2] = 0; Matrix[2][2] = 1; Matrix[3][2] = 0;
+    Matrix[0][3] = 1; Matrix[1][3] = 0; Matrix[2][3] = 0; Matrix[3][3] = 0;
+  */
+
+
+    S[3] = 1;
+    S[2] = s; // s
+    S[1] = s*s; // s^2
+    S[0] = S[1]*s; // s^3
+/*
+    C[0] = p0;
+    C[1] = p1;
+    C[2] = to0;
+    C[3] = ti1;
+    */
+/*
+    V[0] = C[0]*Matrix[0][0] + C[1]*Matrix[1][0] + C[2]*Matrix[2][0] + C[3]*Matrix[3][0];
+    V[1] = C[0]*Matrix[0][1] + C[1]*Matrix[1][1] + C[2]*Matrix[2][1] + C[3]*Matrix[3][1];
+    V[2] = C[0]*Matrix[0][2] + C[1]*Matrix[1][2] + C[2]*Matrix[2][2] + C[3]*Matrix[3][2];
+    V[3] = C[0]*Matrix[0][3] + C[1]*Matrix[1][3] + C[2]*Matrix[2][3] + C[3]*Matrix[3][3];
+*/
+
+    V[0] = p0 *2 + p1*-2 + to0 + ti1;
+    V[1] = p0 *-3 + p1*3 + to0*-2 + ti1*-1;
+    V[2] = to0;
+    V[3] = p0;
+
+    // EDIT: proper TCB interpolation code
+    // ret=V[0]*S[0] + V[1]*S[1] + V[2]*S[2] + V[3]*S[3];
+    ret = V[0]*S[0] + V[1]*S[1] + V[2]*S[2] + V[3];
+
+    return ret;
+}
+
+double TCBSplineInterpolate(
+        double y0,double y1,
+        double y2,double y3,
+        double Factor,
+        double t,
+        double c,
+        double b) {
+
+    float to0;
+
+    if(fixLastVal) {
+         to0 = TCBTangentEquationOutgoing(y0, y1, y2, 0, 0, 0);
+    }else {
+         to0 = TCBTangentEquationOutgoing(y0, y1, y2, t, c, b);
+    }
+
+    float ti1 = TCBTangentEquationIncoming(y1, y2, y3, t, c, b);
+
+    // EDIT: it is, and it just seems to be the Factor variable (linear interpolated range). Now it only needs to have easing implemented...
+
+    return InterpolateTCB(y0, y1,y2, y3, Factor, to0, ti1);
+
+
+}
+
+
+
+
+
 
 /*Function to draw all other 7 pixels present at symmetric position*/
 void drawCircle(int xc, int yc, int x, int y)
@@ -179,6 +276,7 @@ double SmoothStep(double value1, double value2, double amount)
     result = Hermite(value1, 0, value2, 0, result);
     return result;
 }
+
 /* fillPositionsSpline
  * totalFrames: total frames of the movement
  * controlPoints: array of control points
@@ -187,42 +285,59 @@ double SmoothStep(double value1, double value2, double amount)
  *              1: hermite
  *              2: catmull
  *              3: smoothstep
+ *              4: Kochanek Bartels (TCB)
  *
  * tension: -1 .. 1  ( 0.5 centripedal )
  * bias : -1 .. 1   (0)
+ * continuity : -1 .. 1 ( 0 )
  * framesArr: filled frames positions array
  * maxFrames: len of frames array
+ * fixLastVal: eases the last segment aproaching last knot
 */
-uint8_t fillPositionsSpline(uint16_t totalFrames, int32_t * controlPoints, uint16_t controlPointsNb, uint8_t type,double tension , double bias, int32_t * framesArr, uint16_t maxFrames){
+uint8_t fillPositionsSpline(uint16_t totalFrames, int32_t * controlPoints, uint16_t controlPointsNb, uint8_t type,double tension ,double continuity, double bias, int32_t * framesArr, uint16_t maxFrames,uint8_t fixLastValue){
     int32_t myControlPoints[12];
-    uint16_t myControlPointsNb;
     int32_t i;
     int32_t j;
-    double framesT;
+    double biasValue = bias;
+
+    struct timeval st, et;
+
+
+    gettimeofday(&st,NULL);
+
 
     if ( maxFrames < totalFrames){
         return 10; // error totalframes are less then maxFrames
     }
 
-    framesT = (double)totalFrames / (controlPointsNb-1);
-
-    myControlPointsNb = controlPointsNb + 2;
-    myControlPoints[0] = myControlPoints[1];
-
 
     for ( i=1 ; i <= controlPointsNb ; i++ ){
         myControlPoints[i] = controlPoints[ i - 1 ];
     }
+    myControlPoints[0] = myControlPoints[1];
 
-    myControlPoints[ controlPointsNb + 1 ] = controlPoints[ controlPointsNb -1 ];
+    if(fixLastValue){
+        myControlPoints[ controlPointsNb + 1 ] = controlPoints[ controlPointsNb ];
+
+    }else{
+        myControlPoints[ controlPointsNb + 1 ] = controlPoints[ controlPointsNb-1 ];
+
+    }
+    myControlPoints[controlPointsNb + 1] = controlPoints[controlPointsNb - 1];
 
     // so far , we got a new array of position with the dummy start and end knots of the curve
 
-    for ( i = 0 ;  i < controlPointsNb - 1 ; i++ ){
+    for ( i = 0 ;  i < controlPointsNb  ; i++ ){//
+        if(fixLastValue) {
+            if (i == controlPointsNb - 2) {
+                biasValue = -1;
 
+            }
+        }
         for ( j = ((double)totalFrames/(controlPointsNb-1))*i; j<((double)totalFrames/(controlPointsNb-1))*(i+1) ;j++ ) {
             int32_t p0,p1,p2,p3;
             int32_t Y,X;
+            int32_t val1,val2,val3;
             double t;
 
             t = ((double) 1 / ((double)totalFrames / (posCounter - 1))) * (j - (((double)totalFrames / (posCounter - 1)) * i));
@@ -234,16 +349,21 @@ uint8_t fillPositionsSpline(uint16_t totalFrames, int32_t * controlPoints, uint1
             if (type == 0)
                 Y = Lerp(p1,p2,t);
             if (type == 1)
-                Y = HermiteInterpolate( p0, p1, p2, p3, t, tension, bias);
-            else if (type ==2 )
+                Y = HermiteInterpolate( p0, p1, p2, p3, t, tension, biasValue);
+            else if (type == 2 )
                 Y = CatmullRom(p0,p1,p2,p3,t);
-            else if ( type ==3 )
+            else if ( type == 3 )
                 Y = SmoothStep(p1,p2,t);
+            else if (type == 4)
+                Y = TCBSplineInterpolate(p0,p1,p2,p3,t,tension,continuity,biasValue);
             X = j;
-            framesArr[X]=Y;
+            framesArr[X] = Y;
 
         }
     }
+    gettimeofday(&et,NULL);
+    SplineTimeElapsed = ((et.tv_sec - st.tv_sec) * 1000000) + (et.tv_usec - st.tv_usec);
+
 
     return 0; // OK
 }
@@ -405,12 +525,12 @@ void drawBanner(void){
         exit(0);
     }
     SDL_Color White = {255, 255, 255};
-    SDL_Surface* surfaceMessage = TTF_RenderText_Blended_Wrapped(Sans," l: Linear \r\n h: Hermite\r\n c: Catmull\r\n s: SmoothStep\r\n r: Randomize\r\n t: -0.1 tension\r\n y: +0.1 tension\r\n q: quit", White,150);
+    SDL_Surface* surfaceMessage = TTF_RenderText_Blended_Wrapped(Sans," l: Linear \r\n h: Hermite\r\n c: Catmull\r\n s: SmoothStep\r\n p: TCB\r\n\r\n r: Randomize\r\n t: -0.1 tension\r\n y: +0.1 tension\r\n b: +0.1 bias\r\n n: -0.1 bias \r\n /: +0.1 cont\r\n ,: -0.1 cont \r\n x: fix last segment \r\n v: dots/line  \r\n\r\n q: quit", White,150);
     SDL_Texture* Message = SDL_CreateTextureFromSurface(renderer, surfaceMessage);
     SDL_Rect Message_rect;
 
     Message_rect.x = 0;
-    Message_rect.y = 500;
+    Message_rect.y = 300;
     Message_rect.w = surfaceMessage->w;
     Message_rect.h = surfaceMessage->h;
 
@@ -426,17 +546,21 @@ void drawStatus(void){
 
     switch (SPLINETYPE){
         case 0: //lerp
-            snprintf(buffer,255,"LERP");
+            snprintf(buffer,255,"LERP (%dus)",SplineTimeElapsed);
             break;
         case 1: //hermite
-            snprintf(buffer,255,"HERMITE T: %.1f",SplineTension);
+            snprintf(buffer,255,"HERMITE T: %.1f B:%.1f Fix:%d(%dus)",SplineTension,SplineBias,fixLastVal,SplineTimeElapsed);
             break;
         case 2: //catmull
-            snprintf(buffer,255,"CATMULL-ROM");
+            snprintf(buffer,255,"CATMULL-ROM(%dus)",SplineTimeElapsed);
             break;
         case 3: //smooth
-            snprintf(buffer,255,"SMOOTHSTEP");
+            snprintf(buffer,255,"SMOOTHSTEP(%dus)",SplineTimeElapsed);
             break;
+        case 4:
+            snprintf(buffer,255,"TCB T: %.1f B:%.1f C:%.1f Fix:%d(%dus)",SplineTension,SplineBias,SplineContinuity,fixLastVal,SplineTimeElapsed);
+            break;
+
     }
     TTF_Init();
     TTF_Font* Sans = TTF_OpenFont("../FreeSans.ttf", 18);
@@ -446,7 +570,7 @@ void drawStatus(void){
     }
     SDL_Color White = {255, 255, 255};
 
-    SDL_Surface* surfaceMessage = TTF_RenderText_Blended_Wrapped(Sans,buffer, White,300);
+    SDL_Surface* surfaceMessage = TTF_RenderText_Blended_Wrapped(Sans,buffer, White,400);
     SDL_Texture* Message = SDL_CreateTextureFromSurface(renderer, surfaceMessage);
     SDL_Rect Message_rect;
 
@@ -546,12 +670,28 @@ int main(int argc, char* argv[])
                             case SDLK_c:   SPLINETYPE = 2; break;
                             case SDLK_h:   SPLINETYPE = 1; break;
                             case SDLK_s:   SPLINETYPE = 3; break;
+                            case SDLK_p:   SPLINETYPE = 4; break;
                             case SDLK_t:
                                 SplineTension = SplineTension -0.1;
                                 break;
                             case SDLK_y:
                                 SplineTension = SplineTension +0.1;
                                 break;
+                            case SDLK_n:
+                                SplineBias = SplineBias -0.1;
+                                break;
+                            case SDLK_b:
+                                SplineBias = SplineBias +0.1;
+                                break;
+
+                            case SDLK_COMMA:
+                                SplineContinuity = SplineContinuity -0.1;
+                                break;
+                            case SDLK_SLASH:
+                                SplineContinuity = SplineContinuity +0.1;
+                                break;
+
+
                             case SDLK_q:
                                 SDL_Quit();
                                 exit(0);
@@ -561,6 +701,14 @@ int main(int argc, char* argv[])
                                 for (i = 0; i < posCounter; i++) {
                                     controlPoints[i] = (rand() % (300000 - -300000 + 1)) + -300000;
                                     //controlPoints[i] = (rand() % (300000 + 1));
+
+                                }
+                                break;
+                            case SDLK_x:
+                                if (fixLastVal){
+                                    fixLastVal=0;
+                                }else{
+                                    fixLastVal=1;
 
                                 }
                                 break;
@@ -597,7 +745,7 @@ int main(int argc, char* argv[])
 
                     drawAxis();
                     //printf ( "fillPositionsSpline = %d\r\n",
-                    fillPositionsSpline(frames, controlPoints, posCounter, SPLINETYPE , SplineTension , 0 ,framesArray, 4095);
+                    fillPositionsSpline(frames, controlPoints, posCounter, SPLINETYPE , SplineTension ,SplineContinuity, SplineBias ,framesArray, 4095,fixLastVal);
                             //);
                     drawPoints(framesArray,frames,connected);
                     drawControlPoints(controlPoints,posCounter, frames) ;
